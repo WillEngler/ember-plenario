@@ -7,5 +7,10 @@ export default Ember.Route.extend({
       pointDatasets: this.get('query').allEventMetadata(),
       shapeDatasets: this.get('query').allShapeMetadata()
     });
+  },
+
+  afterModel(){
+    //Stop the spinner once loaded.
+    this.controllerFor('discover').set('loadingMeta', false);
   }
 });

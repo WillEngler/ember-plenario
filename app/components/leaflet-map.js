@@ -12,13 +12,16 @@ import Ember from 'ember';
 //  the main query pages and layer + legend for grid display)
 
 
-// Chi-town
+// Chi-town...our beloved default view.
 const lat = 41.795509;
 const lng = -87.581916;
 const zoom = 10;
 const tileURL = 'https://{s}.tiles.mapbox.com/v3/datamade.hn83a654/{z}/{x}/{y}.png';
 
 export default Ember.Component.extend({
+
+  center: [[lat, lng], zoom],
+
   didInsertElement() {
     this._super(...arguments);
     Ember.run.scheduleOnce('afterRender', this, function() {
@@ -26,6 +29,23 @@ export default Ember.Component.extend({
       this.addTiles();
       this.drawElements();
       this.createLegend();
+
+      //Setup listeners that signal the parent component when the map changes.
+      let self = this;
+      this.map.on('moveend', function(){
+        self.updateCenter(self);
+
+        //Also turn off the autopilot flag, since it's done moving.
+        //Note that this comes AFTER updateCenter (so that panning
+        //movement from autopilot doesn't cause the center to change again)
+        Ember.run.next(function(){
+          if (self.isDestroyed) { return; } //Workaround to fix testing.
+          self.set('autopilot', false);
+        });
+      });
+      this.map.on('resize', function(){ //Don't consider map resizes user interaction.
+        self.set('autopilot', true);
+      });
     });
   },
 
@@ -35,7 +55,7 @@ export default Ember.Component.extend({
       tapTolerance: 30,
       minZoom: 1
     };
-    this.set('map', L.map('map', map_options).setView([lat, lng], zoom));
+    this.set('map', L.map('map', map_options).setView(...this.get('center')));
   },
 
   addTiles() {
@@ -102,7 +122,7 @@ export default Ember.Component.extend({
       // Add popups
       const onEachFeature = function(feature, layer) {
         const props = feature.properties;
-        if (props) {
+        if (props && Object.keys(props).length > 0) {
           let table = '<table>';
           for (const key of Object.keys(props)) {
             table += `<tr><td>${key}&nbsp;</td><td>&nbsp;${props[key]}</td></tr>`;
@@ -111,6 +131,7 @@ export default Ember.Component.extend({
           layer.bindPopup(table);
         }
       };
+
       return L.geoJson(geoJSON, {
         onEachFeature: onEachFeature
       });
@@ -189,9 +210,10 @@ export default Ember.Component.extend({
   // On subsequent renders,
   // make sure we're zoomed in on the drawn geom.
   shouldZoom: Ember.observer('zoom', function() {
-    if (this.get('zoom')){
-
+    if (this.get('zoom') && this.map.drawnItems.getLayers().length > 0){
       let layer = this.map.drawnItems.getLayers()[0];
+      layer.setStyle({color: '#03f'});
+      this.set('autopilot', true);
       this.map.fitBounds(layer.getBounds());
     }
   }),
@@ -203,6 +225,27 @@ export default Ember.Component.extend({
     if (!this.get('geoJSON')) {
       this.map.drawnItems.clearLayers();
     }
-  })
+  }),
+
+  //This autopilot flag is an internal signal to updateCenter to determine
+  //whether the map movement was due to the user dragging/scrolling the map
+  //or if it was initiated by an automatic change in center.
+  autopilot: false,
+
+  //If center changes, then recenter the map
+  changedCenter: Ember.observer('center', function() {
+    this.set('autopilot', true);
+    let self = this;
+    self.get('map').setView(new L.LatLng(...self.get('center')[0]), self.get('center')[1]);
+    //Autopilot is stopped after map is done moving. See listeners above.
+  }),
+
+  //Scope here seems a bit different, eh?
+  //It's because it's bound to a map event ('moveend') way up in didInsertElement
+  updateCenter(self) {
+    if(!this.get('autopilot')) {
+      self.sendAction('mapMovedByUser', [[self.map.getCenter().lat, self.map.getCenter().lng], self.map.getZoom()]);
+    }
+  },
 
 });
